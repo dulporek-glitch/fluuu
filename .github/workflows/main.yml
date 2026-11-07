@@ -1,4 +1,10 @@
-name: Build APK
+name: Build APK Fluu GX
+
+# Cara pakai:
+# 1. Upload file ZIP proyek (misal FluuGX.zip) ke root repo, tanpa perlu diekstrak.
+# 2. Simpan file ini di .github/workflows/build.yml
+# 3. Buka tab Actions, workflow jalan otomatis (atau tekan Run workflow).
+# 4. Unduh APK dari bagian Artifacts.
 
 on:
   push:
@@ -11,10 +17,76 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Ambil kode
         uses: actions/checkout@v4
+
+      - name: Cari dan ekstrak ZIP otomatis
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 1) Jika repo sudah berisi proyek yang diekstrak, pakai langsung.
+          ROOT=""
+          if [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
+            ROOT="$PWD"
+            echo "Proyek sudah terekstrak di root repo."
+          else
+            # 2) Kalau tidak, ambil ZIP paling baru di repo.
+            ZIP="$(find . -maxdepth 3 -type f -iname '*.zip' -not -path './.git/*' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+            if [ -z "$ZIP" ]; then
+              echo "::error::Tidak ada file .zip di repo. Upload ZIP proyek (misal FluuGX.zip) ke root repo."
+              exit 1
+            fi
+            echo "ZIP ditemukan: $ZIP"
+            unzip -tq "$ZIP"
+            DEST="$RUNNER_TEMP/proyek"
+            rm -rf "$DEST"; mkdir -p "$DEST"
+            unzip -q -o "$ZIP" -x '__MACOSX/*' '*/.DS_Store' -d "$DEST"
+
+            # 3) Cari folder proyek (yang punya app/src/main/AndroidManifest.xml), baik di root ZIP maupun di dalam subfolder.
+            MANIFEST="$(find "$DEST" -type f -path '*/app/src/main/AndroidManifest.xml' | head -n1 || true)"
+            if [ -z "$MANIFEST" ]; then
+              echo "::error::Di dalam ZIP tidak ada app/src/main/AndroidManifest.xml. Cek struktur ZIP."
+              exit 1
+            fi
+            ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$MANIFEST")")")")"
+          fi
+
+          # 4) Lengkapi file Gradle yang kurang supaya tidak error.
+          if [ ! -f "$ROOT/settings.gradle.kts" ] && [ ! -f "$ROOT/settings.gradle" ]; then
+            echo "settings.gradle.kts tidak ada, dibuatkan otomatis."
+            cat > "$ROOT/settings.gradle.kts" <<'KTS'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "FluuGX"
+          include(":app")
+          KTS
+          fi
+
+          for f in build.gradle.kts app/build.gradle.kts; do
+            if [ ! -f "$ROOT/$f" ]; then
+              echo "::error::File $f tidak ditemukan di $ROOT"
+              exit 1
+            fi
+          done
+
+          echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
+          echo "Folder proyek: $ROOT"
+          ls -la "$ROOT"
 
       - name: Pasang JDK 17
         uses: actions/setup-java@v4
@@ -25,23 +97,21 @@ jobs:
       - name: Pasang Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Pasang Gradle
+      - name: Pasang Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
 
-      - name: Cek isi repo
-        run: ls -la
-
       - name: Build APK
-        run: gradle assembleDebug --no-daemon --console=plain
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --no-daemon --console=plain --stacktrace
 
       - name: Ganti nama APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk FluuGX.apk
+        run: cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" "$RUNNER_TEMP/FluuGX.apk"
 
       - name: Unggah APK
         uses: actions/upload-artifact@v4
         with:
           name: FluuGX-APK
-          path: FluuGX.apk
+          path: ${{ runner.temp }}/FluuGX.apk
           if-no-files-found: error
