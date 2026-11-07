@@ -1,11 +1,5 @@
 name: Build APK Fluu GX
 
-# Cara pakai:
-# 1. Upload file ZIP proyek (misal FluuGX.zip) ke root repo, tanpa perlu diekstrak.
-# 2. Simpan file ini di .github/workflows/build.yml
-# 3. Buka tab Actions, workflow jalan otomatis (atau tekan Run workflow).
-# 4. Unduh APK dari bagian Artifacts.
-
 on:
   push:
     branches: [main, master]
@@ -26,17 +20,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # 1) Jika repo sudah berisi proyek yang diekstrak, pakai langsung.
           ROOT=""
           if [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
             ROOT="$PWD"
             echo "Proyek sudah terekstrak di root repo."
           else
-            # 2) Kalau tidak, ambil ZIP paling baru di repo.
             ZIP="$(find . -maxdepth 3 -type f -iname '*.zip' -not -path './.git/*' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2- || true)"
             if [ -z "$ZIP" ]; then
-              echo "::error::Tidak ada file .zip di repo. Upload ZIP proyek (misal FluuGX.zip) ke root repo."
+              echo "::error::Tidak ada file .zip di repo."
               exit 1
             fi
             echo "ZIP ditemukan: $ZIP"
@@ -44,19 +35,16 @@ jobs:
             DEST="$RUNNER_TEMP/proyek"
             rm -rf "$DEST"; mkdir -p "$DEST"
             unzip -q -o "$ZIP" -x '__MACOSX/*' '*/.DS_Store' -d "$DEST"
-
-            # 3) Cari folder proyek (yang punya app/src/main/AndroidManifest.xml), baik di root ZIP maupun di dalam subfolder.
             MANIFEST="$(find "$DEST" -type f -path '*/app/src/main/AndroidManifest.xml' | head -n1 || true)"
             if [ -z "$MANIFEST" ]; then
-              echo "::error::Di dalam ZIP tidak ada app/src/main/AndroidManifest.xml. Cek struktur ZIP."
+              echo "::error::Di dalam ZIP tidak ada app/src/main/AndroidManifest.xml."
               exit 1
             fi
             ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$MANIFEST")")")")"
           fi
 
-          # 4) Lengkapi file Gradle yang kurang supaya tidak error.
           if [ ! -f "$ROOT/settings.gradle.kts" ] && [ ! -f "$ROOT/settings.gradle" ]; then
-            echo "settings.gradle.kts tidak ada, dibuatkan otomatis."
+            echo "settings.gradle.kts dibuatkan otomatis."
             cat > "$ROOT/settings.gradle.kts" <<'KTS'
           pluginManagement {
               repositories {
@@ -85,7 +73,6 @@ jobs:
           done
 
           echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
-          echo "Folder proyek: $ROOT"
           ls -la "$ROOT"
 
       - name: Pasang JDK 17
@@ -94,8 +81,8 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Pasang Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Terima lisensi Android SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - name: Pasang Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
